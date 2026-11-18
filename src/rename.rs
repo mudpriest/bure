@@ -22,7 +22,10 @@ pub fn apply(dir: &Path, renames: &[(String, String)]) -> Result<(), String> {
             ));
         }
         fs::rename(tmp, &target).map_err(|e| {
-            format!("failed to rename {old:?} -> {new:?} (left as {}): {e}", tmp.display())
+            format!(
+                "failed to rename {old:?} -> {new:?} (left as {}): {e}",
+                tmp.display()
+            )
         })?;
     }
 

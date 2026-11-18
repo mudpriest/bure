@@ -24,19 +24,26 @@ impl fmt::Display for PlanError {
 }
 
 /// Matches line N of `edited` to `old[N]` and returns the `(old, new)` pairs that changed.
+/// A trailing `/` (the directory marker) is stripped from both sides.
 pub fn plan(old: &[String], edited: &str) -> Result<Vec<(String, String)>, PlanError> {
-    let mut new: Vec<&str> = edited.lines().collect();
+    let mut new: Vec<&str> = edited.lines().map(strip_slash).collect();
     while new.last() == Some(&"") {
         new.pop();
     }
     if new.len() != old.len() {
-        return Err(PlanError::LineCount { expected: old.len(), found: new.len() });
+        return Err(PlanError::LineCount {
+            expected: old.len(),
+            found: new.len(),
+        });
     }
 
     let mut seen = HashSet::new();
     for (i, name) in new.iter().enumerate() {
         if !is_valid(name) {
-            return Err(PlanError::InvalidName { line: i + 1, name: name.to_string() });
+            return Err(PlanError::InvalidName {
+                line: i + 1,
+                name: name.to_string(),
+            });
         }
         if !seen.insert(fold(name)) {
             return Err(PlanError::Duplicate(name.to_string()));
@@ -45,10 +52,15 @@ pub fn plan(old: &[String], edited: &str) -> Result<Vec<(String, String)>, PlanE
 
     Ok(old
         .iter()
+        .map(|o| strip_slash(o))
         .zip(new)
-        .filter(|(o, n)| o.as_str() != *n)
-        .map(|(o, n)| (o.clone(), n.to_string()))
+        .filter(|(o, n)| o != n)
+        .map(|(o, n)| (o.to_string(), n.to_string()))
         .collect())
+}
+
+fn strip_slash(name: &str) -> &str {
+    name.strip_suffix('/').unwrap_or(name)
 }
 
 fn is_valid(name: &str) -> bool {
@@ -83,7 +95,10 @@ mod tests {
 
     #[test]
     fn simple_rename() {
-        assert_eq!(plan(&names(&["a", "b"]), "a\nz\n"), Ok(vec![pair("b", "z")]));
+        assert_eq!(
+            plan(&names(&["a", "b"]), "a\nz\n"),
+            Ok(vec![pair("b", "z")])
+        );
     }
 
     #[test]
@@ -96,14 +111,20 @@ mod tests {
 
     #[test]
     fn crlf_and_trailing_blank_lines() {
-        assert_eq!(plan(&names(&["a", "b"]), "x\r\nb\r\n\r\n\n"), Ok(vec![pair("a", "x")]));
+        assert_eq!(
+            plan(&names(&["a", "b"]), "x\r\nb\r\n\r\n\n"),
+            Ok(vec![pair("a", "x")])
+        );
     }
 
     #[test]
     fn line_count_mismatch() {
         assert_eq!(
             plan(&names(&["a", "b"]), "a\n"),
-            Err(PlanError::LineCount { expected: 2, found: 1 })
+            Err(PlanError::LineCount {
+                expected: 2,
+                found: 1
+            })
         );
     }
 
@@ -111,7 +132,10 @@ mod tests {
     fn empty_name() {
         assert_eq!(
             plan(&names(&["a", "b", "c"]), "a\n\nc\n"),
-            Err(PlanError::InvalidName { line: 2, name: String::new() })
+            Err(PlanError::InvalidName {
+                line: 2,
+                name: String::new()
+            })
         );
     }
 
@@ -140,6 +164,14 @@ mod tests {
         assert_eq!(
             plan(&names(&["a", "b"]), "b\nb\n"),
             Err(PlanError::Duplicate("b".into()))
+        );
+    }
+
+    #[test]
+    fn directory_marker_is_stripped() {
+        assert_eq!(
+            plan(&names(&["d/", "e/", "f"]), "x/\ne\nf\n"),
+            Ok(vec![pair("d", "x")])
         );
     }
 

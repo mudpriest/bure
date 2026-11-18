@@ -36,7 +36,8 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     for (o, n) in &renames {
-        println!("{o} -> {n}");
+        let slash = if dir.join(o).is_dir() { "/" } else { "" };
+        println!("{o}{slash} -> {n}{slash}");
     }
     if !confirm(&format!("Apply {} renames? [y/N] ", renames.len()))? {
         println!("Aborted");
@@ -48,17 +49,30 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+/// Lists entry names, directories first and marked with a trailing `/`, like `ls -p --group-directories-first`.
 fn list_entries(dir: &Path) -> Result<Vec<String>, String> {
     let read = fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
-    let mut names = read
+    let mut entries = read
         .map(|entry| {
-            let name = entry.map_err(|e| e.to_string())?.file_name();
-            name.into_string()
-                .map_err(|n| format!("non-UTF-8 file name: {}", n.to_string_lossy()))
+            let entry = entry.map_err(|e| e.to_string())?;
+            let is_dir = entry.path().is_dir();
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|n| format!("non-UTF-8 file name: {}", n.to_string_lossy()))?;
+            Ok((is_dir, name))
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    names.sort();
-    Ok(names)
+        .collect::<Result<Vec<_>, String>>()?;
+    entries.sort_by(|(a_dir, a), (b_dir, b)| {
+        b_dir
+            .cmp(a_dir)
+            .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
+            .then_with(|| a.cmp(b))
+    });
+    Ok(entries
+        .into_iter()
+        .map(|(is_dir, name)| if is_dir { name + "/" } else { name })
+        .collect())
 }
 
 fn edit_names(tmp: &Path, names: &[String]) -> Result<String, String> {
@@ -73,6 +87,8 @@ fn confirm(prompt: &str) -> Result<bool, String> {
     print!("{prompt}");
     io::stdout().flush().map_err(|e| e.to_string())?;
     let mut answer = String::new();
-    io::stdin().read_line(&mut answer).map_err(|e| e.to_string())?;
+    io::stdin()
+        .read_line(&mut answer)
+        .map_err(|e| e.to_string())?;
     Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
 }
