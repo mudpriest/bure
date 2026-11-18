@@ -16,8 +16,12 @@ This builds a release binary and copies it to `~/.cargo/bin` (`%USERPROFILE%\.ca
 ## Usage
 
 ```sh
-bure [DIR]   # DIR defaults to the current directory
+bure [-t|--type f|d]... [DIR]   # DIR defaults to the current directory
 ```
+
+- `-t f` (or `file`) lists only files, `-t d` (or `dir`, `directory`) only directories. `--type=f` works too.
+- Without `-t`, or with both `-t f -t d`, everything is listed.
+- Renaming onto the name of an entry that `-t` filtered out is rejected.
 
 1. bure writes the entry names of `DIR` to a temp file, one per line: directories first (marked with a trailing `/`), then files, each group sorted by name ignoring case.
 2. It opens the file in `$VISUAL`, `$EDITOR`, or a default (`notepad` on Windows, `vi` elsewhere).

@@ -6,6 +6,7 @@ pub enum PlanError {
     LineCount { expected: usize, found: usize },
     InvalidName { line: usize, name: String },
     Duplicate(String),
+    Taken(String),
 }
 
 impl fmt::Display for PlanError {
@@ -19,13 +20,21 @@ impl fmt::Display for PlanError {
                 write!(f, "line {line}: invalid name {name:?}")
             }
             PlanError::Duplicate(name) => write!(f, "duplicate target name {name:?}"),
+            PlanError::Taken(name) => {
+                write!(f, "{name:?} is taken by an entry filtered out by --type")
+            }
         }
     }
 }
 
 /// Matches line N of `edited` to `old[N]` and returns the `(old, new)` pairs that changed.
 /// A trailing `/` (the directory marker) is stripped from both sides.
-pub fn plan(old: &[String], edited: &str) -> Result<Vec<(String, String)>, PlanError> {
+/// `unlisted` are entries that stay in place, so no line may claim their names.
+pub fn plan(
+    old: &[String],
+    edited: &str,
+    unlisted: &[String],
+) -> Result<Vec<(String, String)>, PlanError> {
     let mut new: Vec<&str> = edited.lines().map(strip_slash).collect();
     while new.last() == Some(&"") {
         new.pop();
@@ -37,6 +46,7 @@ pub fn plan(old: &[String], edited: &str) -> Result<Vec<(String, String)>, PlanE
         });
     }
 
+    let taken: HashSet<String> = unlisted.iter().map(|n| fold(n)).collect();
     let mut seen = HashSet::new();
     for (i, name) in new.iter().enumerate() {
         if !is_valid(name) {
@@ -44,6 +54,9 @@ pub fn plan(old: &[String], edited: &str) -> Result<Vec<(String, String)>, PlanE
                 line: i + 1,
                 name: name.to_string(),
             });
+        }
+        if taken.contains(&fold(name)) {
+            return Err(PlanError::Taken(name.to_string()));
         }
         if !seen.insert(fold(name)) {
             return Err(PlanError::Duplicate(name.to_string()));
@@ -90,13 +103,13 @@ mod tests {
 
     #[test]
     fn unchanged_yields_nothing() {
-        assert_eq!(plan(&names(&["a", "b"]), "a\nb\n"), Ok(vec![]));
+        assert_eq!(plan(&names(&["a", "b"]), "a\nb\n", &[]), Ok(vec![]));
     }
 
     #[test]
     fn simple_rename() {
         assert_eq!(
-            plan(&names(&["a", "b"]), "a\nz\n"),
+            plan(&names(&["a", "b"]), "a\nz\n", &[]),
             Ok(vec![pair("b", "z")])
         );
     }
@@ -104,7 +117,7 @@ mod tests {
     #[test]
     fn swap() {
         assert_eq!(
-            plan(&names(&["a", "b"]), "b\na\n"),
+            plan(&names(&["a", "b"]), "b\na\n", &[]),
             Ok(vec![pair("a", "b"), pair("b", "a")])
         );
     }
@@ -112,7 +125,7 @@ mod tests {
     #[test]
     fn crlf_and_trailing_blank_lines() {
         assert_eq!(
-            plan(&names(&["a", "b"]), "x\r\nb\r\n\r\n\n"),
+            plan(&names(&["a", "b"]), "x\r\nb\r\n\r\n\n", &[]),
             Ok(vec![pair("a", "x")])
         );
     }
@@ -120,7 +133,7 @@ mod tests {
     #[test]
     fn line_count_mismatch() {
         assert_eq!(
-            plan(&names(&["a", "b"]), "a\n"),
+            plan(&names(&["a", "b"]), "a\n", &[]),
             Err(PlanError::LineCount {
                 expected: 2,
                 found: 1
@@ -131,7 +144,7 @@ mod tests {
     #[test]
     fn empty_name() {
         assert_eq!(
-            plan(&names(&["a", "b", "c"]), "a\n\nc\n"),
+            plan(&names(&["a", "b", "c"]), "a\n\nc\n", &[]),
             Err(PlanError::InvalidName {
                 line: 2,
                 name: String::new()
@@ -142,11 +155,11 @@ mod tests {
     #[test]
     fn path_separator() {
         assert!(matches!(
-            plan(&names(&["a"]), "x/y\n"),
+            plan(&names(&["a"]), "x/y\n", &[]),
             Err(PlanError::InvalidName { line: 1, .. })
         ));
         assert!(matches!(
-            plan(&names(&["a"]), "x\\y\n"),
+            plan(&names(&["a"]), "x\\y\n", &[]),
             Err(PlanError::InvalidName { line: 1, .. })
         ));
     }
@@ -154,7 +167,7 @@ mod tests {
     #[test]
     fn duplicate_targets() {
         assert_eq!(
-            plan(&names(&["a", "b", "c"]), "x\nx\nc\n"),
+            plan(&names(&["a", "b", "c"]), "x\nx\nc\n", &[]),
             Err(PlanError::Duplicate("x".into()))
         );
     }
@@ -162,7 +175,7 @@ mod tests {
     #[test]
     fn collision_with_unchanged_entry() {
         assert_eq!(
-            plan(&names(&["a", "b"]), "b\nb\n"),
+            plan(&names(&["a", "b"]), "b\nb\n", &[]),
             Err(PlanError::Duplicate("b".into()))
         );
     }
@@ -170,13 +183,27 @@ mod tests {
     #[test]
     fn directory_marker_is_stripped() {
         assert_eq!(
-            plan(&names(&["d/", "e/", "f"]), "x/\ne\nf\n"),
+            plan(&names(&["d/", "e/", "f"]), "x/\ne\nf\n", &[]),
             Ok(vec![pair("d", "x")])
         );
     }
 
     #[test]
+    fn collision_with_unlisted_entry() {
+        assert_eq!(
+            plan(
+                &names(&["a", "b"]),
+                "a
+d
+",
+                &names(&["d"])
+            ),
+            Err(PlanError::Taken("d".into()))
+        );
+    }
+
+    #[test]
     fn case_only_rename_is_allowed() {
-        assert_eq!(plan(&names(&["a"]), "A\n"), Ok(vec![pair("a", "A")]));
+        assert_eq!(plan(&names(&["a"]), "A\n", &[]), Ok(vec![pair("a", "A")]));
     }
 }
